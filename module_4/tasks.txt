@@ -1,0 +1,271 @@
+Итоговый запрос для получения базы данных:
+
+SELECT count_seat.flight_id,
+       count_seat.flight_no,
+       count_seat.scheduled_departure,
+       count_seat.scheduled_arrival,
+       count_seat.departure_airport,
+       count_seat.city departure_city,
+       count_seat.arrival_airport,
+       port.city arrival_city,/*
+            Все параметры рейса нужны в базе данных для изучения и принятия решений:
+            -перенаправить самолет в другое, более востребованное направление;
+            -заменить самолет на менее вместительный и более экономичный;
+            -отменить рейс, как крайний случай.
+            */ 
+       count_seat.status,
+       acrft.model aircraft_model, --Модель самолета пригодится для подсчета расходов на рейс
+       acrft.range aircraft_range, --Дальность полета нужно учитывать для возможной замены самолета с меньшим количеством мест
+       count_seat.occupied_seats, --Количество занятых мест на самолете
+       count_seat.seats_on_plane, --Общее количество мест на самолете
+       count_seat.occupied_seats*100.0/nullif(count_seat.seats_on_plane, 0) fullness_plane, --Заполненность самолета в %
+       COALESCE(count_amount.sum_amount, 0) total_amount, --Общая выручка с проданных на данный самолет билетов
+       COALESCE(count_amount.sum_amount*1.0/nullif(count_seat.occupied_seats, 0), 0) amount_per_ticket, --Средняя выручка с одного билета, проданного на данный самолет
+       COALESCE(count_amount.sum_amount*1.0/nullif(count_seat.occupied_seats, 0)*count_seat.seats_on_plane, 7279.75*count_seat.seats_on_plane) max_possible_amount /*
+            Максимальная возможная прибыль - прибыль, которая была бы при 100% заполнении самолета:
+            - средняя выручка с одного билета умножается на общее количество мест на самолете;
+            - если самолет пустой, то берется минимальная средняя выручка с одного билета - '7279.75' и умножается на общее количество мест на самолете;
+            */
+FROM
+  (SELECT fl.flight_id,
+          fl.flight_no,
+          fl.scheduled_departure,
+          fl.scheduled_arrival,
+          fl.departure_airport,
+          fl.arrival_airport,
+          fl.status,
+          aport.city,
+          fl.aircraft_code,
+          count(DISTINCT bp.seat_no) occupied_seats, --Считаем количество занятых мест на самолете
+ count(DISTINCT s.seat_no) seats_on_plane --Считаем общее количество мест на самолете
+
+   FROM dst_project.flights fl
+   LEFT JOIN dst_project.boarding_passes bp ON bp.flight_id=fl.flight_id
+   LEFT JOIN dst_project.seats s ON s.aircraft_code=fl.aircraft_code
+   LEFT JOIN dst_project.airports aport ON aport.airport_code=fl.departure_airport
+   WHERE fl.departure_airport = 'AAQ'
+     AND (date_trunc('month', fl.scheduled_departure) in ('2017-01-01',
+                                                          '2017-02-01',
+                                                          '2017-12-01'))
+     AND fl.status not in ('Cancelled')
+   GROUP BY fl.flight_id,
+            fl.flight_no,
+            fl.scheduled_departure,
+            fl.scheduled_arrival,
+            fl.departure_airport,
+            fl.arrival_airport,
+            fl.status,
+            aport.city,
+            fl.aircraft_code)count_seat
+LEFT JOIN
+  (SELECT tf.flight_id,
+          sum(tf.amount) sum_amount --Считаем общую выручку с рейса
+   FROM dst_project.ticket_flights tf
+   GROUP BY tf.flight_id)count_amount ON count_amount.flight_id=count_seat.flight_id
+LEFT JOIN dst_project.aircrafts acrft ON acrft.aircraft_code=count_seat.aircraft_code /*
+    Для возможной замены самолета на менее вместительный нужны все возможные характеристики самолета, представленные в базе данных
+    */
+LEFT JOIN dst_project.airports port ON port.airport_code=count_seat.arrival_airport
+ORDER BY port.city, count_seat.scheduled_departure /*
+    Сортируем по городу отправления и времени отправления, чтобы перед отменой рейса оценить заполненность предыдущего и следующего рейса по заданному направлению
+    */
+
+
+Вопрос 1. База данных содержит список аэропортов практически всех крупных городов России. В большинстве городов есть только один аэропорт. Исключение составляет:
+
+SELECT port.city,
+       count(DISTINCT port.airport_code) port_count
+FROM dst_project.airports port
+GROUP BY port.city
+ORDER BY 2 DESC
+LIMIT 2
+
+
+Вопрос 2. Таблица рейсов содержит всю информацию о прошлых, текущих и запланированных рейсах. Сколько всего статусов для рейсов определено в таблице?
+
+SELECT count(DISTINCT fl.status) status_count
+FROM dst_project.flights fl
+
+
+Вопрос 3. Какое количество самолетов находятся в воздухе на момент среза в базе (статус рейса «самолёт уже вылетел и находится в воздухе»).
+
+SELECT count(fl.flight_id) count_flight
+FROM dst_project.flights fl
+GROUP BY fl.status
+HAVING fl.status='Departed'
+
+
+Вопрос 4. Места определяют схему салона каждой модели. Сколько мест имеет самолет модели 773 (Boeing 777-300)?
+
+SELECT count(s.seat_no) count_seats
+FROM dst_project.seats s
+GROUP BY s.aircraft_code
+HAVING s.aircraft_code='773'
+
+
+Вопрос 5. Сколько состоявшихся (фактических) рейсов было совершено между 1 апреля 2017 года и 1 сентября 2017 года?
+
+SELECT count(fl.flight_id) count_flight
+FROM dst_project.flights fl
+WHERE fl.status = 'Arrived'
+  AND fl.scheduled_arrival >= ('2017-04-01')
+  AND fl.scheduled_arrival <= ('2017-09-01')
+
+
+Вопрос 6. Сколько всего рейсов было отменено по данным базы?
+
+SELECT count(fl.flight_id) count_flight
+FROM dst_project.flights fl
+GROUP BY fl.status
+HAVING fl.status='Cancelled'
+
+
+Вопрос 7. Сколько самолетов моделей типа Boeing, Sukhoi Superjet, Airbus находится в базе авиаперевозок?
+
+SELECT 'Boeing' aircraft_make,
+                count(DISTINCT acrft.model) aircraft_count
+FROM dst_project.aircrafts acrft
+WHERE acrft.model LIKE '%Boeing%'
+UNION ALL
+SELECT 'Airbus' aircraft_make,
+                count(DISTINCT acrft.model) aircraft_count
+FROM dst_project.aircrafts acrft
+WHERE acrft.model LIKE '%Airbus%'
+UNION ALL
+SELECT 'Sukhoi Superjet' aircraft_make,
+                         count(DISTINCT acrft.model) aircraft_count
+FROM dst_project.aircrafts acrft
+WHERE acrft.model LIKE '%Sukhoi Superjet%'
+
+
+Вопрос 8. В какой части (частях) света находится больше аэропортов?
+
+SELECT 'Asia' part_world,
+              count(port.airport_code) part_world_count
+FROM dst_project.airports port
+WHERE port.timezone LIKE '%Asia%'
+UNION ALL
+SELECT 'Europe' part_world,
+                count(port.airport_code)
+FROM dst_project.airports port
+WHERE port.timezone LIKE '%Europe%'
+
+
+Вопрос 9. У какого рейса была самая большая задержка прибытия за все время сбора данных? Введите id рейса (flight_id).
+
+SELECT fl.flight_id
+FROM dst_project.flights fl
+ORDER BY fl.scheduled_arrival - fl.actual_arrival
+LIMIT 1
+
+
+Вопрос 10. Когда был запланирован самый первый вылет, сохраненный в базе данных?
+
+SELECT fl.scheduled_departure
+FROM dst_project.flights fl
+ORDER BY fl.scheduled_departure
+LIMIT 1
+
+Вопрос 11. Сколько минут составляет запланированное время полета в самом длительном рейсе?
+
+SELECT (EXTRACT(EPOCH
+                FROM fl.scheduled_arrival) - EXTRACT(EPOCH
+                                                     FROM fl.scheduled_departure))/60 time_travel
+FROM dst_project.flights fl
+ORDER BY (fl.scheduled_arrival - fl.scheduled_departure) DESC
+LIMIT 1
+
+
+Вопрос 12. Между какими аэропортами пролегает самый длительный по времени запланированный рейс?
+
+SELECT departure_airport,
+       arrival_airport
+FROM dst_project.flights fl
+ORDER BY (fl.scheduled_arrival - scheduled_departure) DESC
+LIMIT 1
+
+
+Вопрос 13. Сколько составляет средняя дальность полета среди всех самолетов в минутах? Секунды округляются в меньшую сторону (отбрасываются до минут).
+
+SELECT FLOOR(avg(EXTRACT(EPOCH
+                         FROM fl.scheduled_arrival) - EXTRACT(EPOCH
+                                                              FROM fl.scheduled_departure))/60) avg_time_travel
+FROM dst_project.flights fl
+LIMIT 1
+
+Вопрос 14. Мест какого класса у SU9 больше всего?
+
+SELECT s.fare_conditions,
+       count(s.seat_no) class_seat
+FROM dst_project.seats s
+WHERE aircraft_code = 'SU9'
+GROUP BY s.fare_conditions
+ORDER BY 2 DESC
+LIMIT 1
+
+
+Вопрос 15. Какую самую минимальную стоимость составило бронирование за всю историю?
+
+SELECT b.total_amount
+FROM dst_project.bookings b
+ORDER BY b.total_amount
+LIMIT 1
+
+
+Вопрос 16. Какой номер места был у пассажира с id = 4313 788533?
+
+SELECT bp.seat_no
+FROM dst_project.tickets t
+LEFT JOIN dst_project.boarding_passes bp ON bp.ticket_no = t.ticket_no
+WHERE t.passenger_id = '4313 788533'
+
+
+Вопрос 17. Анапа — курортный город на юге России. Сколько рейсов прибыло в Анапу за 2017 год?
+
+SELECT count(flight_id)
+FROM dst_project.flights fl
+LEFT JOIN dst_project.airports port ON port.airport_code = fl.arrival_airport
+WHERE port.city = 'Anapa'
+  AND date_trunc('year', fl.actual_arrival) in ('2017-01-01')
+
+
+Вопрос 18. Сколько рейсов из Анапы вылетело зимой 2017 года?
+
+SELECT count(flight_id) count_flight
+FROM dst_project.flights fl
+LEFT JOIN dst_project.airports port ON port.airport_code = fl.departure_airport
+WHERE port.city = 'Anapa'
+  AND (date_trunc('month', fl.scheduled_departure) in ('2017-01-01',
+                                                       '2017-02-01',
+                                                       '2017-12-01'))
+  AND status not in ('Cancelled')
+
+Вопрос 19. Посчитайте количество отмененных рейсов из Анапы за все время.
+
+SELECT count(fl.flight_id) count_cancel_flight
+FROM dst_project.flights fl
+LEFT JOIN dst_project.airports port ON port.airport_code = fl.departure_airport
+WHERE port.city = 'Anapa'
+  AND fl.status = 'Cancelled'
+
+
+Вопрос 20. Сколько рейсов из Анапы не летают в Москву?
+
+SELECT count(flight_id) count_flight
+FROM dst_project.flights fl
+LEFT JOIN dst_project.airports port ON port.airport_code = fl.arrival_airport
+WHERE fl.departure_airport = 'AAQ'
+  AND port.city != 'Moscow'
+
+
+Вопрос 21. Какая модель самолета летящего на рейсах из Анапы имеет больше всего мест?
+
+SELECT acrft.model
+FROM dst_project.seats s
+LEFT JOIN dst_project.flights fl ON fl.aircraft_code = s.aircraft_code
+LEFT JOIN dst_project.aircrafts acrft ON acrft.aircraft_code = s.aircraft_code
+WHERE fl.departure_airport = 'AAQ'
+  OR fl.arrival_airport = 'AAQ'
+GROUP BY acrft.model
+ORDER BY count(DISTINCT s.seat_no) DESC
+LIMIT 1
