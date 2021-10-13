@@ -37,8 +37,7 @@ FROM
           aport.city,
           fl.aircraft_code,
           count(DISTINCT bp.seat_no) occupied_seats, --Считаем количество занятых мест на самолете
- count(DISTINCT s.seat_no) seats_on_plane --Считаем общее количество мест на самолете
-
+          count(DISTINCT s.seat_no) seats_on_plane --Считаем общее количество мест на самолете
    FROM dst_project.flights fl
    LEFT JOIN dst_project.boarding_passes bp ON bp.flight_id=fl.flight_id
    LEFT JOIN dst_project.seats s ON s.aircraft_code=fl.aircraft_code
