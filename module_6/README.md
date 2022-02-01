@@ -27,10 +27,10 @@
 6. README.md - описание данного репозитория.
 
 ### В данные о инфляции цен на автомобили были взяты с сайта:
-	[cenamashin.ru](https://cenamashin.ru/statistika/moskva/avg_price?seg=1)
+[cenamashin.ru](https://cenamashin.ru/statistika/moskva/avg_price?seg=1)
 
 ### Kaggle:
 	Konstantin_K_101
   
 ### Публичное решение на Kaggle:
-	[Konstantin_K_101_My_Submissions](https://www.kaggle.com/konstantink101/car-price-prediction-kk)
+[Konstantin_K_101_My_Submissions](https://www.kaggle.com/konstantink101/car-price-prediction-kk)
